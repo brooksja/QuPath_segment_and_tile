@@ -64,18 +64,6 @@ import java.awt.image.AffineTransformOp
 import java.awt.image.DataBufferByte
 import qupath.lib.algorithms.TilerPlugin
 
-// Remove unwanted images (labels and overviews)
-def project = getProject()
-for (entry in project.getImageList()) {
-    if (entry.getImageName().contains("label")) {
-        project.removeImage(entry,true)
-    }
-    if (entry.getImageName().contains("overview")) {
-        project.removeImage(entry,true)
-    }    
-}
-getQuPath().refreshProject()
-
 // file = path to .json that defines the QuPath classifier
 scriptDir = new File(".").getCanonicalPath()
 def file = "QuPath_tissue_segment_and_tile/TissueClass1.json"
@@ -110,71 +98,73 @@ def server = getCurrentServer()
 // as extention for the folders and the tiles
 def name = server.getMetadata().getName()//.replace(".svs","")
 name.take(name.lastIndexOf('.'))
+print(name)
+// only process images that do not include label or overview in their name
+if (!(name.contains("label")) && !(name.contains("overview"))){
+    def home_dir = targetDir + name.toString() // to.String() was added!
+    QPEx.mkdirs(home_dir)
+    def path = buildFilePath(home_dir, String.format("Tile_coords_%s.txt", name))
+    def ann_path = buildFilePath(home_dir, String.format("%s.qptxt", name))
+    def tile_file = new File(path)
+    def ann_file = new File(ann_path)
+    tile_file.text = ''
+    ann_file.text = ''
 
-def home_dir = targetDir + name.toString() // to.String() was added!
-QPEx.mkdirs(home_dir)
-def path = buildFilePath(home_dir, String.format("Tile_coords_%s.txt", name))
-def ann_path = buildFilePath(home_dir, String.format("%s.qptxt", name))
-def tile_file = new File(path)
-def ann_file = new File(ann_path)
-tile_file.text = ''
-ann_file.text = ''
+    for (obj in annotations) {
+        if (obj.isAnnotation()) {
+            def roi = obj.getROI()
+            // Ignore empty annotations
+            if (roi == null) {
+                continue
+            }
+            // If small rectangle, assume image tile, export
+            if (roi.getClass() == qupath.lib.roi.RectangleROI && roi.getBoundsWidth()<=(10*extract_um)) {
+                def region = RegionRequest.createInstance(server.getPath(), 1.0, roi)
+                String tile_name = String.format('%s_(%d,%d)',
+                    name,
+                    region.getX(),
+                    region.getY(),
+                )
+                def old_img = server.readBufferedImage(region)
+                int width_old = old_img.getWidth()
+                int height_old = old_img.getHeight()
+    
+                // Check if tile is mostly background
+                // If >50% of pixels >230, then discard
+                def gray_list = []
+                for (int i=0; i < width_old; i++) {
+                    for (int j=0; j < height_old; j++) {
+                        int gray = old_img.getRGB(i, j)& 0xFF;
+                        gray_list << gray
+                    }
+                }
+                int median_px_i = (width_old * width_old) / 2
+                median_px = gray_list.sort()[median_px_i]
+                if (median_px > 230) { 
+                    print("Tile has >50% brightness >230, discarding")
+                    continue
+                }
+                // Write image tile coords to text file
+                tile_file << roi.getAllPoints() << System.lineSeparator()
+                BufferedImage img = new BufferedImage(tile_px, tile_px, old_img.getType())
+                if (export) {
+                    // Resize tile
+                    AffineTransform resize = new AffineTransform()
+                    resize_factor = tile_px / width_old
+                    resize.scale(resize_factor, resize_factor)
+                    AffineTransformOp resizeOp = new AffineTransformOp(resize, AffineTransformOp.TYPE_BILINEAR)
+                    resizeOp.filter(old_img, img)
+                    w = img.getWidth()
+                    h = img.getHeight()
 
-for (obj in annotations) {
-if (obj.isAnnotation()) {
-def roi = obj.getROI()
-    // Ignore empty annotations
-    if (roi == null) {
-        continue
-    }
-    // If small rectangle, assume image tile, export
-    if (roi.getClass() == qupath.lib.roi.RectangleROI && roi.getBoundsWidth()<=(5*extract_um)) {
-        def region = RegionRequest.createInstance(server.getPath(), 1.0, roi)
-        String tile_name = String.format('%s_(%d,%d)',
-            name,
-            region.getX(),
-            region.getY(),
-        )
-        def old_img = server.readBufferedImage(region)
-        int width_old = old_img.getWidth()
-        int height_old = old_img.getHeight()
+                    def fileImage = new File(home_dir, tile_name + ".jpg")
+                    print("Writing image tiles for tile " + tile_name)
+                    ImageIO.write(img, "jpg", fileImage)
+                }
 
-        // Check if tile is mostly background
-        // If >50% of pixels >240, then discard
-        def gray_list = []
-        for (int i=0; i < width_old; i++) {
-            for (int j=0; j < height_old; j++) {
-                int gray = old_img.getRGB(i, j)& 0xFF;
-                gray_list << gray
+                ann_file << "end" << System.lineSeparator()
             }
         }
-        int median_px_i = (width_old * width_old) / 2
-        median_px = gray_list.sort()[median_px_i]
-        if (median_px > 220) { 
-            print("Tile has >50% brightness >240, discarding")
-            continue
-        }
-        // Write image tile coords to text file
-        tile_file << roi.getAllPoints() << System.lineSeparator()
-        BufferedImage img = new BufferedImage(tile_px, tile_px, old_img.getType())
-        if (export) {
-            // Resize tile
-            AffineTransform resize = new AffineTransform()
-            resize_factor = tile_px / width_old
-            resize.scale(resize_factor, resize_factor)
-            AffineTransformOp resizeOp = new AffineTransformOp(resize, AffineTransformOp.TYPE_BILINEAR)
-            resizeOp.filter(old_img, img)
-            w = img.getWidth()
-            h = img.getHeight()
-
-            def fileImage = new File(home_dir, tile_name + ".jpg")
-            print("Writing image tiles for tile " + tile_name)
-            ImageIO.write(img, "jpg", fileImage)
-        }
-
-        ann_file << "end" << System.lineSeparator()
     }
+    print("Finished processing " + name)
 }
-
-}
-print("Finished processing" + name)
