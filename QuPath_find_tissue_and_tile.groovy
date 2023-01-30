@@ -64,6 +64,18 @@ import java.awt.image.AffineTransformOp
 import java.awt.image.DataBufferByte
 import qupath.lib.algorithms.TilerPlugin
 
+// Remove unwanted images (labels and overviews)
+def project = getProject()
+for (entry in project.getImageList()) {
+    if (entry.getImageName().contains("label")) {
+        project.removeImage(entry,true)
+    }
+    if (entry.getImageName().contains("overview")) {
+        project.removeImage(entry,true)
+    }    
+}
+getQuPath().refreshProject()
+
 // file = path to .json that defines the QuPath classifier
 scriptDir = new File(".").getCanonicalPath()
 def file = "QuPath_tissue_segment_and_tile/TissueClass1.json"
@@ -91,7 +103,6 @@ def imageData = QPEx.getCurrentImageData()
 def hierarchy = imageData.getHierarchy()
 def annotations = hierarchy.getFlattenedObjectList(null).findAll {it.isAnnotation()}
 def server = getCurrentServer()
-print server
 
 // def name = getCurrentImageData().getServer().getPath().replace(".mrxs","")–> returns the image name without the extension
 
@@ -166,4 +177,4 @@ def roi = obj.getROI()
 }
 
 }
-print("Finished!")
+print("Finished processing" + name)
